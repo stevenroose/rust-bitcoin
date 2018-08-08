@@ -26,6 +26,7 @@ pub mod decimal;
 pub mod hash;
 pub mod iter;
 pub mod misc;
+pub mod psbt;
 pub mod uint;
 
 #[cfg(feature = "fuzztarget")]
