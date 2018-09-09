@@ -8,9 +8,10 @@ use std::io::{self, Cursor};
 use secp256k1::{PublicKey, Secp256k1};
 
 use blockdata::script::Script;
-use blockdata::transaction::Transaction;
+use blockdata::transaction::{SigHashType, Transaction, TxOut};
 use consensus::encode::{self, serialize, Decodable};
 use util::bip32::{ChildNumber, Fingerprint};
+use util::psbt;
 
 /// A trait for serializing a value as raw data for insertion into PSBT
 /// key-value pairs.
@@ -26,6 +27,8 @@ pub trait Deserialize: Sized {
 }
 
 impl_psbt_de_serialize!(Transaction);
+impl_psbt_de_serialize!(TxOut);
+impl_psbt_de_serialize!(Vec<Vec<u8>>); // scriptWitness
 
 impl Serialize for Script {
     fn serialize(&self) -> Vec<u8> {
@@ -90,5 +93,37 @@ impl Deserialize for (Fingerprint, Vec<ChildNumber>) {
         }
 
         Ok((fprint, dpath))
+    }
+}
+
+// partial sigs
+impl Serialize for Vec<u8> {
+    fn serialize(&self) -> Vec<u8> {
+        self.clone()
+    }
+}
+
+impl Deserialize for Vec<u8> {
+    fn deserialize(bytes: &[u8]) -> Result<Self, encode::Error> {
+        Ok(bytes.to_vec())
+    }
+}
+
+impl Serialize for SigHashType {
+    fn serialize(&self) -> Vec<u8> {
+        serialize(&self.as_u32())
+    }
+}
+
+impl Deserialize for SigHashType {
+    fn deserialize(bytes: &[u8]) -> Result<Self, encode::Error> {
+        let raw: u32 = encode::deserialize(bytes)?;
+        let rv: SigHashType = SigHashType::from_u32(raw);
+
+        if rv.as_u32() == raw {
+            Ok(rv)
+        } else {
+            Err(psbt::Error::NonStandardSigHashType(raw).into())
+        }
     }
 }
