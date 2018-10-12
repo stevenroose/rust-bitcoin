@@ -28,11 +28,50 @@ use std::default::Default;
 use std::fmt;
 #[cfg(feature="bitcoinconsensus")] use std::collections::HashMap;
 
-use util::hash::{BitcoinHash, Sha256dHash};
+use util::hash::{BitcoinHash, Sha256dHash, HexError};
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
 use consensus::encode::{self, serialize, Encoder, Decoder};
 use consensus::encode::{Encodable, Decodable, VarInt};
+
+/// An error in parsing an OutPoint.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ParseOutPointError {
+    /// Error in TXID part.
+    Txid(HexError),
+    /// Error in vout part.
+    Vout(::std::num::ParseIntError),
+    /// Error in general format.
+    Format,
+}
+
+impl fmt::Display for ParseOutPointError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ParseOutPointError::Txid(ref e) => write!(f, "error parsing TXID: {}", e),
+            ParseOutPointError::Vout(ref e) => write!(f, "error parsing vout: {}", e),
+            ParseOutPointError::Format => write!(f, "OutPoint not in <txid>:<vout> format"),
+        }
+    }
+}
+
+impl ::std::error::Error for ParseOutPointError {
+    fn description(&self) -> &str {
+        match *self {
+            ParseOutPointError::Txid(_) => "TXID parse error",
+            ParseOutPointError::Vout(_) => "vout parse error",
+            ParseOutPointError::Format => "outpoint format error",
+        }
+    }
+
+    fn cause(&self) -> Option<&::std::error::Error> {
+        match *self {
+            ParseOutPointError::Txid(ref e) => Some(e),
+            ParseOutPointError::Vout(ref e) => Some(e),
+            ParseOutPointError::Format => None,
+        }
+    }
+}
 
 /// A reference to a transaction output
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -80,6 +119,21 @@ impl OutPoint {
 impl Default for OutPoint {
     fn default() -> Self {
         OutPoint::null()
+    }
+}
+
+impl ::std::str::FromStr for OutPoint {
+    type Err = ParseOutPointError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let split: Vec<&str> = s.split(":").collect();
+        if split.len() != 2 {
+            return Err(ParseOutPointError::Format);
+        }
+        Ok(OutPoint{
+            txid: Sha256dHash::from_hex(split[0]).map_err(|e| ParseOutPointError::Txid(e))?,
+            vout: split[1].parse().map_err(|e| ParseOutPointError::Vout(e))?,
+        })
     }
 }
 
@@ -437,32 +491,32 @@ impl<D: Decoder> Decodable<D> for Transaction {
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum SigHashType {
     /// 0x1: Sign all outputs
-    All		= 0x01,
+    All     = 0x01,
     /// 0x2: Sign no outputs --- anyone can choose the destination
-    None	= 0x02,
+    None    = 0x02,
     /// 0x3: Sign the output whose index matches this input's index. If none exists,
     /// sign the hash `0000000000000000000000000000000000000000000000000000000000000001`.
     /// (This rule is probably an unintentional C++ism, but it's consensus so we have
     /// to follow it.)
-    Single	= 0x03,
+    Single  = 0x03,
     /// 0x81: Sign all outputs but only this input
-    AllPlusAnyoneCanPay		= 0x81,
+    AllPlusAnyoneCanPay     = 0x81,
     /// 0x82: Sign no outputs and only this input
-    NonePlusAnyoneCanPay	= 0x82,
+    NonePlusAnyoneCanPay    = 0x82,
     /// 0x83: Sign one output and only this input (see `Single` for what "one output" means)
-    SinglePlusAnyoneCanPay	= 0x83
+    SinglePlusAnyoneCanPay  = 0x83
 }
 
 impl SigHashType {
      /// Break the sighash flag into the "real" sighash flag and the ANYONECANPAY boolean
      fn split_anyonecanpay_flag(&self) -> (SigHashType, bool) {
          match *self {
-             SigHashType::All		=> (SigHashType::All, false),
-             SigHashType::None		=> (SigHashType::None, false),
-             SigHashType::Single	=> (SigHashType::Single, false),
-             SigHashType::AllPlusAnyoneCanPay		=> (SigHashType::All, true),
-             SigHashType::NonePlusAnyoneCanPay		=> (SigHashType::None, true),
-             SigHashType::SinglePlusAnyoneCanPay	=> (SigHashType::Single, true)
+             SigHashType::All       => (SigHashType::All, false),
+             SigHashType::None      => (SigHashType::None, false),
+             SigHashType::Single    => (SigHashType::Single, false),
+             SigHashType::AllPlusAnyoneCanPay       => (SigHashType::All, true),
+             SigHashType::NonePlusAnyoneCanPay      => (SigHashType::None, true),
+             SigHashType::SinglePlusAnyoneCanPay    => (SigHashType::Single, true)
          }
      }
 
@@ -492,14 +546,35 @@ mod tests {
     #[cfg(all(feature = "serde", feature = "strason"))]
     use strason::Json;
 
-    use super::{Transaction, TxIn};
+    use super::{OutPoint, ParseOutPointError, Transaction, TxIn};
 
+    use std::str::FromStr;
     use blockdata::script::Script;
     #[cfg(all(feature = "serde", feature = "strason"))]
     use consensus::encode::serialize;
     use consensus::encode::deserialize;
     use util::hash::{BitcoinHash, Sha256dHash};
     use util::misc::hex_bytes;
+
+    #[test]
+    fn test_outpoint() {
+        assert_eq!(OutPoint::from_str("i don't care"), 
+                   Err(ParseOutPointError::Format));
+        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1:1"), 
+                   Err(ParseOutPointError::Format));
+        assert_eq!(OutPoint::from_str("i don't care:1"),
+                   Err(ParseOutPointError::Txid(Sha256dHash::from_hex("i don't care").unwrap_err())));
+        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X:1"), 
+                   Err(ParseOutPointError::Txid(Sha256dHash::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X").unwrap_err())));
+        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"), 
+                   Err(ParseOutPointError::Vout(u32::from_str("lol").unwrap_err())));
+ 
+        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42"), 
+                   Ok(OutPoint{
+                       txid: Sha256dHash::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
+                       vout: 42,
+                   }));
+    }
 
     #[test]
     fn test_txin() {
