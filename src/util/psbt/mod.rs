@@ -18,6 +18,7 @@
 //! defined at https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
 //! except we define PSBTs containing non-standard SigHash types as invalid.
 
+use blockdata::script::Script;
 use blockdata::transaction::Transaction;
 use consensus::encode::{self, Encodable, Decodable, Encoder, Decoder};
 
@@ -58,13 +59,14 @@ impl PartiallySignedTransaction {
         })
     }
 
-    /// Extract a Transaction from a finalized PartiallySignedTransaction
+    /// Extract the Transaction from a PartiallySignedTransaction by filling 
+    /// in the available signature information in place.
     pub fn extract_tx(self) -> Transaction {
         let mut tx: Transaction = self.global.unsigned_tx;
 
         for (vin, psbtin) in tx.input.iter_mut().zip(self.inputs.into_iter()) {
-            vin.script_sig = psbtin.final_script_sig.unwrap();
-            vin.witness = psbtin.final_script_witness.unwrap();
+            vin.script_sig = psbtin.final_script_sig.or_else(|| Some(Script::new())).unwrap();
+            vin.witness = psbtin.final_script_witness.or_else(|| Some(Vec::new())).unwrap();
         }
 
         tx
