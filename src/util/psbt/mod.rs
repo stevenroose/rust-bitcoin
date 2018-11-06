@@ -38,13 +38,13 @@ pub use self::map::{Map, Global, Input, Output};
 #[derive(Debug, Clone, PartialEq)]
 pub struct PartiallySignedTransaction {
     /// The key-value pairs for all global data.
-    global: Global,
+    pub global: Global,
     /// The corresponding key-value map for each input in the unsigned
     /// transaction.
-    inputs: Vec<Input>,
+    pub inputs: Vec<Input>,
     /// The corresponding key-value map for each output in the unsigned
     /// transaction.
-    outputs: Vec<Output>,
+    pub outputs: Vec<Output>,
 }
 
 impl PartiallySignedTransaction {
