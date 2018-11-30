@@ -56,6 +56,8 @@ pub struct Input {
     /// The finalized, fully-constructed scriptWitness with signatures and any
     /// other scripts necessary for this input to pass validation.
     pub final_script_witness: Option<Vec<Vec<u8>>>,
+    /// The proof-of-reserves commitment message in case this input is a PoR commitment input.
+    pub por_commitment: Option<String>,
     /// Unknown key-value pairs for this input.
     pub unknown: HashMap<raw::Key, Vec<u8>>,
 }
@@ -101,6 +103,11 @@ impl Map for Input {
             8u8 => {
                 impl_psbt_insert_pair! {
                     self.final_script_witness <= <raw_key: _>|<raw_value: Vec<Vec<u8>>>
+                }
+            }
+            9u8 => {
+                impl_psbt_insert_pair! {
+                    self.por_commitment <= <raw_key: _>|<raw_value: String>
                 }
             }
             2u8 => {
@@ -168,6 +175,10 @@ impl Map for Input {
             rv.push(self.final_script_witness as <8u8, _>|<Script>)
         }
 
+        impl_psbt_get_pair! {
+            rv.push(self.por_commitment as <8u8, _>|<String>)
+        }
+
         for (key, value) in self.unknown.iter() {
             rv.push(raw::Pair {
                 key: key.clone(),
@@ -194,6 +205,7 @@ impl Map for Input {
         merge!(witness_script, self, other);
         merge!(final_script_sig, self, other);
         merge!(final_script_witness, self, other);
+        merge!(por_commitment, self, other);
 
         Ok(())
     }

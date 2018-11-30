@@ -39,6 +39,7 @@ use std::error;
 use std::fmt;
 use std::io;
 use std::io::{Cursor, Read, Write};
+use std::string;
 use byteorder::{LittleEndian, WriteBytesExt, ReadBytesExt};
 use hex::encode as hex_encode;
 
@@ -58,6 +59,8 @@ pub enum Error {
     Bech32(bitcoin_bech32::Error),
     /// Error from the `byteorder` crate
     ByteOrder(io::Error),
+    /// UTF-8 decoding error
+    Utf8(string::FromUtf8Error),
     /// PSBT-related error
     Psbt(psbt::Error),
     /// Network magic was not expected
@@ -102,6 +105,7 @@ impl fmt::Display for Error {
             Error::Base58(ref e) => fmt::Display::fmt(e, f),
             Error::Bech32(ref e) => fmt::Display::fmt(e, f),
             Error::ByteOrder(ref e) => fmt::Display::fmt(e, f),
+            Error::Utf8(ref e) => fmt::Display::fmt(e, f),
             Error::Psbt(ref e) => fmt::Display::fmt(e, f),
             Error::UnexpectedNetworkMagic { expected: ref e, actual: ref a } => write!(f, "{}: expected {}, actual {}", error::Error::description(self), e, a),
             Error::OversizedVectorAllocation { requested: ref r, max: ref m } => write!(f, "{}: requested {}, maximum {}", error::Error::description(self), r, m),
@@ -123,6 +127,7 @@ impl error::Error for Error {
             Error::Base58(ref e) => Some(e),
             Error::Bech32(ref e) => Some(e),
             Error::ByteOrder(ref e) => Some(e),
+            Error::Utf8(ref e) => Some(e),
             Error::Psbt(ref e) => Some(e),
             Error::UnexpectedNetworkMagic { .. }
             | Error::OversizedVectorAllocation { .. }
@@ -142,6 +147,7 @@ impl error::Error for Error {
             Error::Base58(ref e) => e.description(),
             Error::Bech32(ref e) => e.description(),
             Error::ByteOrder(ref e) => e.description(),
+            Error::Utf8(ref e) => e.description(),
             Error::Psbt(ref e) => e.description(),
             Error::UnexpectedNetworkMagic { .. } => "unexpected network magic",
             Error::OversizedVectorAllocation { .. } => "allocation of oversized vector requested",
@@ -170,11 +176,17 @@ impl From<bitcoin_bech32::Error> for Error {
     }
 }
 
-
 #[doc(hidden)]
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Error::Io(error)
+    }
+}
+
+#[doc(hidden)]
+impl From<string::FromUtf8Error> for Error {
+    fn from(error: string::FromUtf8Error) -> Self {
+        Error::Utf8(error)
     }
 }
 

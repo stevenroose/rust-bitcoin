@@ -141,3 +141,15 @@ impl Deserialize for SigHashType {
         }
     }
 }
+
+impl Serialize for String {
+    fn serialize(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+impl Deserialize for String {
+    fn deserialize(bytes: &[u8]) -> Result<Self, encode::Error> {
+        Ok(String::from_utf8(bytes.to_vec())?)
+    }
+}
