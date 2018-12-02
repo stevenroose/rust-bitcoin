@@ -157,8 +157,22 @@ impl Precision for MilliSatoshi {
     }
 }
 
+/// Precision that allows a minimum amount of 10^-21 satoshi.
+#[cfg(feature = "amount-i128")]
+#[derive(Copy, Clone, Hash)]
+pub struct ZeptoSatoshi;
+#[cfg(feature = "amount-i128")]
+impl Precision for ZeptoSatoshi {
+    fn precision() -> i32 {
+        21
+    }
+}
+
 /// The inner type used to represent amounts.
+#[cfg(not(feature = "amount-i128"))]
 type Inner = i64;
+#[cfg(feature = "amount-i128")]
+type Inner = i128;
 
 /// Used to do math with Inner types.
 const INNER_TEN: Inner = 10;

@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [features]
 fuzztarget = ["secp256k1/fuzztarget"]
 serde-decimal = ["serde", "strason"]
+amount-i128 = []
 
 [dependencies]
 bitcoin-bech32 = "0.8.0"
