@@ -66,7 +66,7 @@ impl PartiallySignedTransaction {
 
         for (vin, psbtin) in tx.input.iter_mut().zip(self.inputs.into_iter()) {
             vin.script_sig = psbtin.final_script_sig.unwrap_or_else(|| Script::new());
-            vin.witness = psbtin.final_script_witness.or_else(|| Some(Vec::new())).unwrap();
+            vin.witness = psbtin.final_script_witness.unwrap_or_else(|| Vec::new());
         }
 
         tx
