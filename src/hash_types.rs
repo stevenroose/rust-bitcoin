@@ -19,7 +19,7 @@
 use std::io;
 
 use consensus::encode::{Encodable, Decodable, Error};
-use hashes::{sha256, sha256d, hash160, Hash, hex::{ToHex, FromHex}};
+use hashes::{sha256, sha256d, hash160, Hash};
 
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {
@@ -48,3 +48,5 @@ hash_newtype!(WScriptHash, sha256::Hash, 32, doc="SegWit version of a Bitcoin Sc
 hash_newtype!(XpubIdentifier, hash160::Hash, 20, doc="XpubIdentifier as defined in BIP-32.");
 
 impl_hashencode!(Txid);
+impl_hashencode!(Wtxid);
+impl_hashencode!(BlockHash);
