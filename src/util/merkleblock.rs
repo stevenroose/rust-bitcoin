@@ -26,7 +26,7 @@
 //!
 //! ```rust
 //! extern crate bitcoin;
-//! use bitcoin::hashes::sha256d;
+//! use bitcoin::hash_types::Txid;
 //! use bitcoin::hashes::hex::FromHex;
 //! use bitcoin::{Block, MerkleBlock};
 //!
@@ -41,12 +41,12 @@
 //! let mb: MerkleBlock = bitcoin::consensus::deserialize(&mb_bytes).unwrap();
 //!
 //! // Authenticate and extract matched transaction ids
-//! let mut matches: Vec<sha256d::Hash> = vec![];
+//! let mut matches: Vec<Txid> = vec![];
 //! let mut index: Vec<u32> = vec![];
 //! assert!(mb.extract_matches(&mut matches, &mut index).is_ok());
 //! assert_eq!(1, matches.len());
 //! assert_eq!(
-//!     sha256d::Hash::from_hex(
+//!     Txid::from_hex(
 //!         "5a4ebf66822b0b2d56bd9dc64ece0bc38ee7844a23ff1d7320a88c5fdb2ad3e2").unwrap(),
 //!     matches[0]
 //! );
@@ -134,7 +134,7 @@ impl PartialMerkleTree {
     ///
     /// ```rust
     /// extern crate bitcoin;
-    /// use bitcoin::hashes::sha256d;
+    /// use bitcoin::hash_types::Txid;
     /// use bitcoin::hashes::hex::FromHex;
     /// use bitcoin::util::merkleblock::PartialMerkleTree;
     ///
@@ -408,7 +408,7 @@ impl MerkleBlock {
     ///
     /// ```rust
     /// extern crate bitcoin;
-    /// use bitcoin::hashes::sha256d;
+    /// use bitcoin::hash_types::Txid;
     /// use bitcoin::hashes::hex::FromHex;
     /// use bitcoin::{Block, MerkleBlock};
     ///
@@ -427,13 +427,13 @@ impl MerkleBlock {
     /// let block: Block = bitcoin::consensus::deserialize(&block_bytes).unwrap();
     ///
     /// // Create a merkle block containing a single transaction
-    /// let txid = sha256d::Hash::from_hex(
+    /// let txid = Txid::from_hex(
     ///     "5a4ebf66822b0b2d56bd9dc64ece0bc38ee7844a23ff1d7320a88c5fdb2ad3e2").unwrap();
     /// let match_txids = vec![txid].into_iter().collect();
     /// let mb = MerkleBlock::from_block(&block, &match_txids);
     ///
     /// // Authenticate and extract matched transaction ids
-    /// let mut matches: Vec<sha256d::Hash> = vec![];
+    /// let mut matches: Vec<Txid> = vec![];
     /// let mut index: Vec<u32> = vec![];
     /// assert!(mb.extract_matches(&mut matches, &mut index).is_ok());
     /// assert_eq!(txid, matches[0]);
