@@ -35,7 +35,7 @@ use std::io::{Cursor, Read, Write};
 use hashes::hex::ToHex;
 
 use hashes::{sha256d, Hash as HashTrait};
-use hash_types::{FilterHash, MerkleBranch};
+use hash_types::{FilterHash, TxMerkleBranch};
 
 use util::endian;
 use util::psbt;
@@ -592,7 +592,7 @@ macro_rules! impl_vec {
     }
 }
 impl_vec!(FilterHash);
-impl_vec!(MerkleBranch);
+impl_vec!(TxMerkleBranch);
 impl_vec!(Transaction);
 impl_vec!(TxOut);
 impl_vec!(TxIn);

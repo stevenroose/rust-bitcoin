@@ -21,8 +21,6 @@ use std::io;
 use consensus::encode::{Encodable, Decodable, Error};
 use hashes::{sha256, sha256d, hash160, Hash};
 
-// Do not remore: required in order to get hash types implementation macros to work correctly
-#[allow(unused_imports)]
 use hashes::hex::{ToHex, FromHex};
 
 macro_rules! impl_hashencode {
@@ -52,9 +50,10 @@ hash_newtype!(ScriptHash, hash160::Hash, 20, doc="A hash of Bitcoin Script bytec
 hash_newtype!(WPubkeyHash, hash160::Hash, 20, doc="SegWit version of a public key hash.");
 hash_newtype!(WScriptHash, sha256::Hash, 32, doc="SegWit version of a Bitcoin Script bytecode hash.");
 
-hash_newtype!(MerkleRoot, sha256d::Hash, 32, doc="A hash corresponding to the Merkle tree root");
-hash_newtype!(MerkleBranch, sha256d::Hash, 32, doc="A hash of the Merkle tree branch");
-hash_newtype!(WitnessCommit, sha256d::Hash, 32, doc="A hash corresponding to the witness structure commitment in the coinbase transaction");
+hash_newtype!(TxMerkleRoot, sha256d::Hash, 32, doc="A hash corresponding to the Merkle tree root for transactions");
+hash_newtype!(TxMerkleBranch, sha256d::Hash, 32, doc="A hash of the Merkle tree branch for transactions");
+hash_newtype!(WitnessMerkleRoot, sha256d::Hash, 32, doc="A hash corresponding to the Merkle tree root for witness data");
+hash_newtype!(WitnessCommitment, sha256d::Hash, 32, doc="A hash corresponding to the witness structure commitment in the coinbase transaction");
 hash_newtype!(XpubIdentifier, hash160::Hash, 20, doc="XpubIdentifier as defined in BIP-32.");
 
 hash_newtype!(FilterHash, sha256d::Hash, 32, doc="Bloom filter souble-SHA256 locator hash, as defined in BIP-168");
@@ -64,6 +63,7 @@ impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
 impl_hashencode!(SigHash);
 impl_hashencode!(BlockHash);
-impl_hashencode!(MerkleRoot);
-impl_hashencode!(MerkleBranch);
+impl_hashencode!(TxMerkleRoot);
+impl_hashencode!(TxMerkleBranch);
+impl_hashencode!(WitnessMerkleRoot);
 impl_hashencode!(FilterHash);

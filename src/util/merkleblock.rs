@@ -59,7 +59,7 @@ use std::collections::HashSet;
 use std::io;
 
 use hashes::Hash;
-use hash_types::{Txid, MerkleRoot, MerkleBranch};
+use hash_types::{Txid, TxMerkleRoot, TxMerkleBranch};
 
 use blockdata::constants::{MAX_BLOCK_WEIGHT, MIN_TRANSACTION_WEIGHT};
 use consensus::encode::{self, Decodable, Encodable};
@@ -120,7 +120,7 @@ pub struct PartialMerkleTree {
     /// node-is-parent-of-matched-txid bits
     bits: Vec<bool>,
     /// Transaction ids and internal hashes
-    hashes: Vec<MerkleBranch>,
+    hashes: Vec<TxMerkleBranch>,
 }
 
 impl PartialMerkleTree {
@@ -181,7 +181,7 @@ impl PartialMerkleTree {
         &self,
         matches: &mut Vec<Txid>,
         indexes: &mut Vec<u32>,
-    ) -> Result<MerkleRoot, MerkleBlockError> {
+    ) -> Result<TxMerkleRoot, MerkleBlockError> {
         matches.clear();
         indexes.clear();
         // An empty set will not work
@@ -221,7 +221,7 @@ impl PartialMerkleTree {
         if hash_used != self.hashes.len() as u32 {
             return Err(BadFormat("Not all hashes were consumed".to_owned()));
         }
-        Ok(MerkleRoot::from_inner(hash_merkle_root.into_inner()))
+        Ok(TxMerkleRoot::from_inner(hash_merkle_root.into_inner()))
     }
 
     /// Helper function to efficiently calculate the number of nodes at given height
@@ -232,10 +232,10 @@ impl PartialMerkleTree {
     }
 
     /// Calculate the hash of a node in the merkle tree (at leaf level: the txid's themselves)
-    fn calc_hash(&self, height: u32, pos: u32, txids: &[Txid]) -> MerkleBranch {
+    fn calc_hash(&self, height: u32, pos: u32, txids: &[Txid]) -> TxMerkleBranch {
         if height == 0 {
             // Hash at height 0 is the txid itself
-            MerkleBranch::from_inner(txids[pos as usize].into_inner())
+            TxMerkleBranch::from_inner(txids[pos as usize].into_inner())
         } else {
             // Calculate left hash
             let left = self.calc_hash(height - 1, pos * 2, txids);
@@ -291,7 +291,7 @@ impl PartialMerkleTree {
         hash_used: &mut u32,
         matches: &mut Vec<Txid>,
         indexes: &mut Vec<u32>,
-    ) -> Result<MerkleBranch, MerkleBlockError> {
+    ) -> Result<TxMerkleBranch, MerkleBlockError> {
         if *bits_used as usize >= self.bits.len() {
             return Err(BadFormat("Overflowed the bits array".to_owned()));
         }
@@ -344,11 +344,11 @@ impl PartialMerkleTree {
     }
 
     /// Helper method to produce SHA256D(left + right)
-    fn parent_hash(left: MerkleBranch, right: MerkleBranch) -> MerkleBranch {
-        let mut encoder = MerkleBranch::engine();
+    fn parent_hash(left: TxMerkleBranch, right: TxMerkleBranch) -> TxMerkleBranch {
+        let mut encoder = TxMerkleBranch::engine();
         left.consensus_encode(&mut encoder).unwrap();
         right.consensus_encode(&mut encoder).unwrap();
-        MerkleBranch::from_engine(encoder)
+        TxMerkleBranch::from_engine(encoder)
     }
 }
 
@@ -370,7 +370,7 @@ impl Encodable for PartialMerkleTree {
 impl Decodable for PartialMerkleTree {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let num_transactions: u32 = Decodable::consensus_decode(&mut d)?;
-        let hashes: Vec<MerkleBranch> = Decodable::consensus_decode(&mut d)?;
+        let hashes: Vec<TxMerkleBranch> = Decodable::consensus_decode(&mut d)?;
 
         let bytes: Vec<u8> = Decodable::consensus_decode(d)?;
         let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
@@ -498,7 +498,7 @@ mod tests {
 
     use hashes::Hash;
     use hashes::hex::{FromHex, ToHex};
-    use hash_types::{Txid, MerkleRoot, MerkleBranch};
+    use hash_types::{Txid, TxMerkleRoot, TxMerkleBranch};
     use secp256k1::rand::prelude::*;
 
     use consensus::encode::{deserialize, serialize};
@@ -565,7 +565,7 @@ mod tests {
 
                 // Check that it has the same merkle root as the original, and a valid one
                 assert_eq!(merkle_root_1, merkle_root_2);
-                assert_ne!(merkle_root_2, MerkleRoot::default());
+                assert_ne!(merkle_root_2, TxMerkleRoot::default());
 
                 // check that it contains the matched transactions (in the same order!)
                 assert_eq!(match_txid1, match_txid2);
@@ -701,7 +701,7 @@ mod tests {
             let hashes = &mut self.hashes;
             let mut hash = hashes[n].into_inner();
             hash[(bit >> 3) as usize] ^= 1 << (bit & 7);
-            hashes[n] = MerkleBranch::from_slice(&hash).unwrap();
+            hashes[n] = TxMerkleBranch::from_slice(&hash).unwrap();
         }
     }
 
