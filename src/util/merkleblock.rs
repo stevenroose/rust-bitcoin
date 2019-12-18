@@ -496,7 +496,7 @@ impl Decodable for MerkleBlock {
 mod tests {
     use std::cmp::min;
 
-    use hashes::{Hash, sha256d};
+    use hashes::Hash;
     use hashes::hex::{FromHex, ToHex};
     use hash_types::{Txid, TxMerkleRoot, TxMerkleBranch};
     use secp256k1::rand::prelude::*;
@@ -518,7 +518,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             // Calculate the merkle root and height
-            let hashes = txids.iter().map(|t| sha256d::Hash::from(*t)).collect();
+            let hashes = txids.iter().map(|t| t.as_hash());
             let merkle_root_1: TxMerkleRoot = bitcoin_merkle_root(hashes).into();
             let mut height = 1;
             let mut ntx = num_tx;

@@ -21,8 +21,11 @@ use std::io;
 use hashes::Hash;
 use consensus::encode::Encodable;
 
-/// Calculates the merkle root of a list of txids hashes directly
-pub fn bitcoin_merkle_root<T>(data: Vec<T>) -> T
+/// Calculates the merkle root of a list of hashes inline
+/// into the allocated slice.
+///
+/// In most cases, you'll want to use [bitcoin_merkle_root] instead.
+pub fn bitcoin_merkle_root_inline<T>(data: &mut [T]) -> T
     where T: Hash + Encodable,
           <T as Hash>::Engine: io::Write,
 {
@@ -34,16 +37,43 @@ pub fn bitcoin_merkle_root<T>(data: Vec<T>) -> T
         return T::from_inner(data[0].into_inner());
     }
     // Recursion
-    let mut next = vec![];
     for idx in 0..((data.len() + 1) / 2) {
         let idx1 = 2 * idx;
         let idx2 = min(idx1 + 1, data.len() - 1);
         let mut encoder = T::engine();
         data[idx1].consensus_encode(&mut encoder).unwrap();
         data[idx2].consensus_encode(&mut encoder).unwrap();
-        next.push(T::from_engine(encoder));
+        data[idx] = T::from_engine(encoder);
     }
-    bitcoin_merkle_root(next)
+    let half_len = data.len() / 2 + data.len() % 2;
+    bitcoin_merkle_root_inline(&mut data[0..half_len])
+}
+
+/// Calculates the merkle root of an iterator of hashes.
+pub fn bitcoin_merkle_root<T, I>(mut iter: I) -> T
+    where T: Hash + Encodable,
+          <T as Hash>::Engine: io::Write,
+          I: ExactSizeIterator<Item = T>,
+{
+    // Base case
+    if iter.len() == 0 {
+        return Default::default();
+    }
+    if iter.len() == 1 {
+        return T::from_inner(iter.nth(0).unwrap().into_inner());
+    }
+    // Recursion
+    let half_len = iter.len() / 2 + iter.len() % 2;
+    let mut alloc = Vec::with_capacity(half_len);
+    while let Some(hash1) = iter.next() {
+        // If the size is odd, use the last element twice.
+        let hash2 = iter.next().unwrap_or(hash1);
+        let mut encoder = T::engine();
+        hash1.consensus_encode(&mut encoder).unwrap();
+        hash2.consensus_encode(&mut encoder).unwrap();
+        alloc.push(T::from_engine(encoder));
+    }
+    bitcoin_merkle_root_inline(&mut alloc)
 }
 
 /// Objects which are referred to by hash
