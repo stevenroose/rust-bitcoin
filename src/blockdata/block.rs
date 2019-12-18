@@ -22,9 +22,9 @@
 
 use util;
 use util::Error::{BlockBadTarget, BlockBadProofOfWork};
-use util::hash::{BitcoinHash, MerkleRooted, bitcoin_merkle_root};
+use util::hash::{BitcoinHash, bitcoin_merkle_root};
 use hashes::{Hash, sha256d, HashEngine};
-use hash_types::{Txid, Wtxid, BlockHash, TxMerkleRoot, WitnessMerkleRoot, WitnessCommitment};
+use hash_types::{Wtxid, BlockHash, TxMerkleRoot, WitnessMerkleRoot, WitnessCommitment};
 use util::uint::Uint256;
 use consensus::encode::Encodable;
 use network::constants::Network;
@@ -93,6 +93,12 @@ impl Block {
         false
     }
 
+    /// Calculate the transaction merkle root.
+    pub fn merkle_root(&self) -> TxMerkleRoot {
+        let hashes: Vec<sha256d::Hash> = self.txdata.iter().map(|obj| obj.txid().into()).collect();
+        bitcoin_merkle_root(hashes).into()
+    }
+
     /// compute witness commitment for the transaction list
     pub fn compute_witness_commitment (witness_root: &WitnessMerkleRoot, witness_reserved_value: &[u8]) -> WitnessCommitment {
         let mut encoder = WitnessCommitment::engine();
@@ -103,16 +109,10 @@ impl Block {
 
     /// Merkle root of transactions hashed for witness
     pub fn witness_root(&self) -> WitnessMerkleRoot {
-        let mut txhashes = vec!(Wtxid::default());
-        txhashes.extend(self.txdata.iter().skip(1).map(|t|t.wtxid()));
-        let hash_value: sha256d::Hash = bitcoin_merkle_root(txhashes).into();
-        hash_value.into()
-    }
-}
-
-impl MerkleRooted for Block {
-    fn merkle_root(&self) -> TxMerkleRoot {
-        bitcoin_merkle_root::<Txid>(self.txdata.iter().map(|obj| obj.txid().into()).collect())
+        let mut txhashes: Vec<sha256d::Hash> = Vec::with_capacity(self.txdata.len());
+        txhashes.push(Wtxid::default().into());
+        txhashes.extend(self.txdata.iter().skip(1).map(|t| sha256d::Hash::from(t.wtxid())));
+        bitcoin_merkle_root(txhashes).into()
     }
 }
 
@@ -212,7 +212,6 @@ mod tests {
 
     use blockdata::block::{Block, BlockHeader};
     use consensus::encode::{deserialize, serialize};
-    use util::hash::MerkleRooted;
 
     #[test]
     fn block_test() {

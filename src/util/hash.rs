@@ -16,37 +16,32 @@
 //! Utility functions related to hashing data, including merkleization
 
 use std::cmp::min;
-use std::default::Default;
+use std::io;
 
 use hashes::Hash;
-use hash_types::{Txid, TxidType, TxMerkleRoot};
-
-
-/// Any collection of objects for which a merkle root makes sense to calculate
-pub trait MerkleRooted {
-    /// Construct a merkle tree from a collection, with elements ordered as
-    /// they were in the original collection, and return the merkle root.
-    fn merkle_root(&self) -> TxMerkleRoot;
-}
+use consensus::encode::Encodable;
 
 /// Calculates the merkle root of a list of txids hashes directly
-pub fn bitcoin_merkle_root<T: TxidType>(data: Vec<T>) -> TxMerkleRoot {
+pub fn bitcoin_merkle_root<T>(data: Vec<T>) -> T
+    where T: Hash + Encodable,
+          <T as Hash>::Engine: io::Write,
+{
     // Base case
     if data.len() < 1 {
         return Default::default();
     }
     if data.len() < 2 {
-        return TxMerkleRoot::from_inner(data[0].into_inner());
+        return T::from_inner(data[0].into_inner());
     }
     // Recursion
     let mut next = vec![];
     for idx in 0..((data.len() + 1) / 2) {
         let idx1 = 2 * idx;
         let idx2 = min(idx1 + 1, data.len() - 1);
-        let mut encoder = TxMerkleRoot::engine();
+        let mut encoder = T::engine();
         data[idx1].consensus_encode(&mut encoder).unwrap();
         data[idx2].consensus_encode(&mut encoder).unwrap();
-        next.push(Txid::from_engine(encoder));
+        next.push(T::from_engine(encoder));
     }
     bitcoin_merkle_root(next)
 }
