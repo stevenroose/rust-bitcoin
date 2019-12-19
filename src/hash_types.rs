@@ -33,8 +33,7 @@ macro_rules! impl_hashencode {
 
         impl Decodable for $hashtype {
             fn consensus_decode<D: io::Read>(d: D) -> Result<Self, Error> {
-                let inner = <<$hashtype as Hash>::Inner>::consensus_decode(d)?;
-                Ok(Self::from_slice(&inner).unwrap())
+                Ok(Self::from_inner(<<$hashtype as Hash>::Inner>::consensus_decode(d)?))
             }
         }
     }

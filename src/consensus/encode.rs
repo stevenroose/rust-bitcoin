@@ -34,7 +34,7 @@ use std::borrow::Cow;
 use std::io::{Cursor, Read, Write};
 use hashes::hex::ToHex;
 
-use hashes::{sha256d, Hash as HashTrait};
+use hashes::{sha256d, Hash};
 use hash_types::{FilterHash, TxMerkleBranch};
 
 use util::endian;
@@ -651,7 +651,7 @@ impl Decodable for Box<[u8]> {
 
 /// Do a double-SHA256 on some data and return the first 4 bytes
 fn sha2_checksum(data: &[u8]) -> [u8; 4] {
-    let checksum = <sha256d::Hash as HashTrait>::hash(data);
+    let checksum = <sha256d::Hash as Hash>::hash(data);
     [checksum[0], checksum[1], checksum[2], checksum[3]]
 }
 
@@ -732,8 +732,7 @@ impl Encodable for sha256d::Hash {
 
 impl Decodable for sha256d::Hash {
     fn consensus_decode<D: io::Read>(d: D) -> Result<Self, Error> {
-        let inner = <[u8; 32]>::consensus_decode(d)?;
-        Ok(sha256d::Hash::from_slice(&inner).unwrap())
+        Ok(Self::from_inner(<<Self as Hash>::Inner>::consensus_decode(d)?))
     }
 }
 
