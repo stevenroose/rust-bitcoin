@@ -72,8 +72,8 @@ pub enum Error {
         /// The invalid checksum
         actual: [u8; 4],
     },
-	/// VarInt was encoded in a non-minimal way
-	NonMinimalVarInt,
+    /// VarInt was encoded in a non-minimal way
+    NonMinimalVarInt,
     /// Network magic was unknown
     UnknownNetworkMagic(u32),
     /// Parsing error
@@ -82,6 +82,8 @@ pub enum Error {
     UnsupportedSegwitFlag(u8),
     /// Unrecognized network command
     UnrecognizedNetworkCommand(String),
+    /// Invalid Inventory type
+    UnknownInventoryType(u32),
 }
 
 impl fmt::Display for Error {
@@ -95,13 +97,14 @@ impl fmt::Display for Error {
                 "allocation of oversized vector: requested {}, maximum {}", r, m),
             Error::InvalidChecksum { expected: ref e, actual: ref a } => write!(f,
                 "invalid checksum: expected {}, actual {}", e.to_hex(), a.to_hex()),
-			Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
+            Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
             Error::UnknownNetworkMagic(ref m) => write!(f, "unknown network magic: {}", m),
             Error::ParseFailed(ref e) => write!(f, "parse failed: {}", e),
             Error::UnsupportedSegwitFlag(ref swflag) => write!(f,
                 "unsupported segwit version: {}", swflag),
             Error::UnrecognizedNetworkCommand(ref nwcmd) => write!(f,
                 "unrecognized network command: {}", nwcmd),
+            Error::UnknownInventoryType(ref tp) => write!(f, "Unknown Inventory type: {}", tp),
         }
     }
 }
@@ -114,11 +117,12 @@ impl error::Error for Error {
             Error::UnexpectedNetworkMagic { .. }
             | Error::OversizedVectorAllocation { .. }
             | Error::InvalidChecksum { .. }
-			| Error::NonMinimalVarInt
+            | Error::NonMinimalVarInt
             | Error::UnknownNetworkMagic(..)
             | Error::ParseFailed(..)
             | Error::UnsupportedSegwitFlag(..)
-            | Error::UnrecognizedNetworkCommand(..) => None,
+            | Error::UnrecognizedNetworkCommand(..)
+            | Error::UnknownInventoryType(..) => None,
         }
     }
 
