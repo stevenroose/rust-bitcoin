@@ -18,11 +18,13 @@
 //! Bitcoin data (blocks and transactions) around.
 //!
 
+use std::io;
+
+use hashes::sha256d;
+
 use network::constants;
 use consensus::encode::{self, Decodable, Encodable};
-use hash_types::FilterHash;
-
-use std::io;
+use hash_types::BlockHash;
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
 /// The type of an inventory object
@@ -49,9 +51,9 @@ pub struct GetBlocksMessage {
     /// Locator hashes --- ordered newest to oldest. The remote peer will
     /// reply with its longest known chain, starting from a locator hash
     /// if possible and block 1 otherwise.
-    pub locator_hashes: Vec<FilterHash>,
+    pub locator_hashes: Vec<BlockHash>,
     /// References the block to stop at, or zero to just fetch the maximum 500 blocks
-    pub stop_hash: FilterHash,
+    pub stop_hash: BlockHash,
 }
 
 /// The `getheaders` message
@@ -62,9 +64,9 @@ pub struct GetHeadersMessage {
     /// Locator hashes --- ordered newest to oldest. The remote peer will
     /// reply with its longest known chain, starting from a locator hash
     /// if possible and block 1 otherwise.
-    pub locator_hashes: Vec<FilterHash>,
+    pub locator_hashes: Vec<BlockHash>,
     /// References the header to stop at, or zero to just fetch the maximum 2000 headers
-    pub stop_hash: FilterHash
+    pub stop_hash: BlockHash
 }
 
 /// An inventory object --- a reference to a Bitcoin object
@@ -73,7 +75,7 @@ pub struct Inventory {
     /// The type of object that is referenced
     pub inv_type: InvType,
     /// The object's hash
-    pub hash: FilterHash
+    pub hash: sha256d::Hash,
 }
 
 impl ::std::hash::Hash for Inventory {
@@ -84,7 +86,7 @@ impl ::std::hash::Hash for Inventory {
 
 impl GetBlocksMessage {
     /// Construct a new `getblocks` message
-    pub fn new(locator_hashes: Vec<FilterHash>, stop_hash: FilterHash) -> GetBlocksMessage {
+    pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetBlocksMessage {
         GetBlocksMessage {
             version: constants::PROTOCOL_VERSION,
             locator_hashes: locator_hashes.clone(),
@@ -97,7 +99,7 @@ impl_consensus_encoding!(GetBlocksMessage, version, locator_hashes, stop_hash);
 
 impl GetHeadersMessage {
     /// Construct a new `getheaders` message
-    pub fn new(locator_hashes: Vec<FilterHash>, stop_hash: FilterHash) -> GetHeadersMessage {
+    pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetHeadersMessage {
         GetHeadersMessage {
             version: constants::PROTOCOL_VERSION,
             locator_hashes: locator_hashes,
