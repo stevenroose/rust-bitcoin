@@ -24,6 +24,7 @@ use blockdata::opcodes;
 use consensus::{encode, Encodable};
 
 #[cfg(feature = "secp-recovery")]
+#[cfg_attr(docsrs, doc(cfg(feature = "secp-recovery")))]
 pub use self::message_signing::{MessageSignature, MessageSignatureError};
 
 /// The prefix for signed messages using Bitcoin's message signing protocol.
@@ -43,6 +44,7 @@ mod message_signing {
     use util::address::{Address, AddressType};
 
     /// An error used for dealing with Bitcoin Signed Messages.
+    #[cfg_attr(docsrs, doc(cfg(feature = "secp-recovery")))]
     #[derive(Debug, PartialEq, Eq)]
     pub enum MessageSignatureError {
         /// Signature is expected to be 65 bytes.
@@ -64,6 +66,7 @@ mod message_signing {
     }
 
     #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     impl error::Error for MessageSignatureError {
         fn cause(&self) -> Option<&dyn error::Error> {
             match *self {
@@ -86,6 +89,7 @@ mod message_signing {
     /// `fmt::Display` and `str::FromStr` implementations, the `base64` feature
     /// must be enabled.
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    #[cfg_attr(docsrs, doc(cfg(feature = "secp-recovery")))]
     pub struct MessageSignature {
         /// The inner recoverable signature.
         pub signature: RecoverableSignature,
@@ -164,11 +168,13 @@ mod message_signing {
                 Some(AddressType::P2sh) => false,
                 Some(AddressType::P2wpkh) => false,
                 Some(AddressType::P2wsh) => false,
+                Some(AddressType::P2tr) => false,
                 None => false,
             })
         }
 
         #[cfg(feature = "base64")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
         /// Convert a signature from base64 encoding.
         pub fn from_base64(s: &str) -> Result<MessageSignature, MessageSignatureError> {
             let bytes = ::base64::decode(s).map_err(|_| MessageSignatureError::InvalidBase64)?;
@@ -176,6 +182,7 @@ mod message_signing {
         }
 
         #[cfg(feature = "base64")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
         /// Convert to base64 encoding.
         pub fn to_base64(&self) -> String {
             ::base64::encode(&self.serialize()[..])
@@ -183,6 +190,7 @@ mod message_signing {
     }
 
     #[cfg(feature = "base64")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
     impl fmt::Display for MessageSignature {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let bytes = self.serialize();
@@ -193,6 +201,7 @@ mod message_signing {
     }
 
     #[cfg(feature = "base64")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
     impl ::core::str::FromStr for MessageSignature {
         type Err = MessageSignatureError;
         fn from_str(s: &str) -> Result<MessageSignature, MessageSignatureError> {
@@ -223,7 +232,7 @@ pub fn script_find_and_remove(haystack: &mut Vec<u8>, needle: &[u8]) -> usize {
             top = top.wrapping_sub(needle.len());
             if overflow { break; }
         } else {
-            i += match opcodes::All::from((*haystack)[i]).classify() {
+            i += match opcodes::All::from((*haystack)[i]).classify(opcodes::ClassifyContext::Legacy) {
                 opcodes::Class::PushBytes(n) => n as usize + 1,
                 opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA1) => 2,
                 opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA2) => 3,

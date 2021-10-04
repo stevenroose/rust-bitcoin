@@ -133,6 +133,7 @@ impl fmt::Display for ParseOutPointError {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl  error::Error for ParseOutPointError {
     fn cause(&self) -> Option<&dyn  error::Error> {
         match *self {
@@ -429,6 +430,39 @@ impl Transaction {
         self.get_scaled_size(1)
     }
 
+    /// Gets the "vsize" of this transaction. Will be `ceil(weight / 4.0)`.
+    #[inline]
+    pub fn get_vsize(&self) -> usize {
+        let weight = self.get_weight();
+        (weight + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR
+    }
+
+    /// Gets the size of this transaction excluding the witness data.
+    pub fn get_strippedsize(&self) -> usize {
+        let mut input_size = 0;
+        for input in &self.input {
+            input_size += 32 + 4 + 4 + // outpoint (32+4) + nSequence
+                VarInt(input.script_sig.len() as u64).len() +
+                input.script_sig.len();
+        }
+        let mut output_size = 0;
+        for output in &self.output {
+            output_size += 8 + // value
+                VarInt(output.script_pubkey.len() as u64).len() +
+                output.script_pubkey.len();
+        }
+        let non_input_size =
+        // version:
+        4 +
+        // count varints:
+        VarInt(self.input.len() as u64).len() +
+        VarInt(self.output.len() as u64).len() +
+        output_size +
+        // lock_time
+        4;
+        non_input_size + input_size
+    }
+
     /// Internal utility function for get_{size,weight}
     fn get_scaled_size(&self, scale_factor: usize) -> usize {
         let mut input_weight = 0;
@@ -468,6 +502,7 @@ impl Transaction {
     }
 
     #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Shorthand for [Self::verify_with_flags] with flag [bitcoinconsensus::VERIFY_ALL]
     pub fn verify<S>(&self, spent: S) -> Result<(), script::Error>
         where S: FnMut(&OutPoint) -> Option<TxOut> {
@@ -475,6 +510,7 @@ impl Transaction {
     }
 
     #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Verify that this transaction is able to spend its inputs
     /// The lambda spent should not return the same TxOut twice!
     pub fn verify_with_flags<S, F>(&self, mut spent: S, flags: F) -> Result<(), script::Error>
@@ -634,6 +670,7 @@ impl fmt::Display for NonStandardSigHashType {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for NonStandardSigHashType {}
 
 /// Hashtype of an input's signature, encoded in the last byte of the signature
@@ -771,6 +808,7 @@ mod tests {
 
     use hash_types::*;
     use SigHashType;
+    use util::sighash::SigHashCache;
 
     #[test]
     fn test_outpoint() {
@@ -857,6 +895,8 @@ mod tests {
                    "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string());
         assert_eq!(realtx.get_weight(), tx_bytes.len()*WITNESS_SCALE_FACTOR);
         assert_eq!(realtx.get_size(), tx_bytes.len());
+        assert_eq!(realtx.get_vsize(), tx_bytes.len());
+        assert_eq!(realtx.get_strippedsize(), tx_bytes.len());
     }
 
     #[test]
@@ -887,8 +927,24 @@ mod tests {
                    "f5864806e3565c34d1b41e716f72609d00b55ea5eac5b924c9719a842ef42206".to_string());
         assert_eq!(format!("{:x}", realtx.wtxid()),
                    "80b7d8a82d5d5bf92905b06f2014dd699e03837ca172e3a59d51426ebbe3e7f5".to_string());
-        assert_eq!(realtx.get_weight(), 442);
+        const EXPECTED_WEIGHT: usize = 442;
+        assert_eq!(realtx.get_weight(), EXPECTED_WEIGHT);
         assert_eq!(realtx.get_size(), tx_bytes.len());
+        assert_eq!(realtx.get_vsize(), 111);
+        // Since
+        //     size   =                        stripped_size + witness_size
+        //     weight = WITNESS_SCALE_FACTOR * stripped_size + witness_size
+        // then,
+        //     stripped_size = (weight - size) / (WITNESS_SCALE_FACTOR - 1)
+        let expected_strippedsize = (EXPECTED_WEIGHT - tx_bytes.len()) / (WITNESS_SCALE_FACTOR - 1);
+        assert_eq!(realtx.get_strippedsize(), expected_strippedsize);
+        // Construct a transaction without the witness data.
+        let mut tx_without_witness = realtx.clone();
+        tx_without_witness.input.iter_mut().for_each(|input| input.witness.clear());
+        assert_eq!(tx_without_witness.get_weight(), expected_strippedsize*WITNESS_SCALE_FACTOR);
+        assert_eq!(tx_without_witness.get_size(), expected_strippedsize);
+        assert_eq!(tx_without_witness.get_vsize(), expected_strippedsize);
+        assert_eq!(tx_without_witness.get_strippedsize(), expected_strippedsize);
     }
 
     #[test]
@@ -1004,7 +1060,15 @@ mod tests {
         raw_expected.reverse();
         let expected_result = SigHash::from_slice(&raw_expected[..]).unwrap();
 
-        let actual_result = tx.signature_hash(input_index, &script, hash_type as u32);
+        let actual_result = if raw_expected[0] % 2 == 0 {
+            // tx.signature_hash and cache.legacy_signature_hash are the same, this if helps to test
+            // both the codepaths without repeating the test code
+            tx.signature_hash(input_index, &script, hash_type as u32)
+        } else {
+            let cache = SigHashCache::new(&tx);
+            cache.legacy_signature_hash(input_index, &script, hash_type as u32).unwrap()
+        };
+
         assert_eq!(actual_result, expected_result);
     }
 

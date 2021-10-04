@@ -114,6 +114,7 @@ impl fmt::Display for ParseAmountError {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl ::std::error::Error for ParseAmountError {}
 
 fn is_too_precise(s: &str, precision: usize) -> bool {
@@ -523,6 +524,13 @@ impl FromStr for Amount {
     }
 }
 
+impl ::core::iter::Sum for Amount {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        let sats: u64 = iter.map(|amt| amt.0).sum();
+        Amount::from_sat(sats)
+    }
+}
+
 /// SignedAmount
 ///
 /// The [SignedAmount] type can be used to express Bitcoin amounts that supports
@@ -848,7 +856,54 @@ impl FromStr for SignedAmount {
     }
 }
 
+impl ::core::iter::Sum for SignedAmount {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+        let sats: i64 = iter.map(|amt| amt.0).sum();
+        SignedAmount::from_sat(sats)
+    }
+}
+
+/// Calculate the sum over the iterator using checked arithmetic.
+pub trait CheckedSum<R>: private::SumSeal<R> {
+    /// Calculate the sum over the iterator using checked arithmetic. If an over or underflow would
+    /// happen it returns `None`.
+    fn checked_sum(self) -> Option<R>;
+}
+
+impl<T> CheckedSum<Amount> for T where T: Iterator<Item = Amount> {
+    fn checked_sum(mut self) -> Option<Amount> {
+        let first = Some(self.next().unwrap_or_default());
+
+        self.fold(
+            first,
+            |acc, item| acc.and_then(|acc| acc.checked_add(item))
+        )
+    }
+}
+
+impl<T> CheckedSum<SignedAmount> for T where T: Iterator<Item = SignedAmount> {
+    fn checked_sum(mut self) -> Option<SignedAmount> {
+        let first = Some(self.next().unwrap_or_default());
+
+        self.fold(
+            first,
+            |acc, item| acc.and_then(|acc| acc.checked_add(item))
+        )
+    }
+}
+
+mod private {
+    use ::{Amount, SignedAmount};
+
+    /// Used to seal the `CheckedSum` trait
+    pub trait SumSeal<A> {}
+
+    impl<T> SumSeal<Amount> for T where T: Iterator<Item = Amount> {}
+    impl<T> SumSeal<SignedAmount> for T where T: Iterator<Item = SignedAmount> {}
+}
+
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod serde {
     // methods are implementation of a standardized serde-specific signature
     #![allow(missing_docs)]
@@ -955,7 +1010,7 @@ pub mod serde {
     }
 
     pub mod as_sat {
-        //! Serialize and deserialize [Amount] as real numbers denominated in satoshi.
+        //! Serialize and deserialize [`Amount`](crate::Amount) as real numbers denominated in satoshi.
         //! Use with `#[serde(with = "amount::serde::as_sat")]`.
 
         use serde::{Deserializer, Serializer};
@@ -970,7 +1025,7 @@ pub mod serde {
         }
 
         pub mod opt {
-            //! Serialize and deserialize [Optoin<Amount>] as real numbers denominated in satoshi.
+            //! Serialize and deserialize [`Option<Amount>`](crate::Amount) as real numbers denominated in satoshi.
             //! Use with `#[serde(default, with = "amount::serde::as_sat::opt")]`.
 
             use serde::{Deserializer, Serializer, de};
@@ -1018,7 +1073,7 @@ pub mod serde {
     }
 
     pub mod as_btc {
-        //! Serialize and deserialize [Amount] as JSON numbers denominated in BTC.
+        //! Serialize and deserialize [`Amount`](crate::Amount) as JSON numbers denominated in BTC.
         //! Use with `#[serde(with = "amount::serde::as_btc")]`.
 
         use serde::{Deserializer, Serializer};
@@ -1515,5 +1570,73 @@ mod tests {
 
         let value_without: serde_json::Value = serde_json::from_str("{}").unwrap();
         assert_eq!(without, serde_json::from_value(value_without).unwrap());
+    }
+
+    #[test]
+    fn sum_amounts() {
+        assert_eq!(Amount::from_sat(0), vec![].into_iter().sum::<Amount>());
+        assert_eq!(SignedAmount::from_sat(0), vec![].into_iter().sum::<SignedAmount>());
+
+        let amounts = vec![
+            Amount::from_sat(42),
+            Amount::from_sat(1337),
+            Amount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().sum::<Amount>();
+        assert_eq!(Amount::from_sat(1400), sum);
+
+        let amounts = vec![
+            SignedAmount::from_sat(-42),
+            SignedAmount::from_sat(1337),
+            SignedAmount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().sum::<SignedAmount>();
+        assert_eq!(SignedAmount::from_sat(1316), sum);
+    }
+
+    #[test]
+    fn checked_sum_amounts() {
+        assert_eq!(Some(Amount::from_sat(0)), vec![].into_iter().checked_sum());
+        assert_eq!(Some(SignedAmount::from_sat(0)), vec![].into_iter().checked_sum());
+
+        let amounts = vec![
+            Amount::from_sat(42),
+            Amount::from_sat(1337),
+            Amount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().checked_sum();
+        assert_eq!(Some(Amount::from_sat(1400)), sum);
+
+        let amounts = vec![
+            Amount::from_sat(u64::max_value()),
+            Amount::from_sat(1337),
+            Amount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().checked_sum();
+        assert_eq!(None, sum);
+
+        let amounts = vec![
+            SignedAmount::from_sat(i64::min_value()),
+            SignedAmount::from_sat(-1),
+            SignedAmount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().checked_sum();
+        assert_eq!(None, sum);
+
+        let amounts = vec![
+            SignedAmount::from_sat(i64::max_value()),
+            SignedAmount::from_sat(1),
+            SignedAmount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().checked_sum();
+        assert_eq!(None, sum);
+
+        let amounts = vec![
+            SignedAmount::from_sat(42),
+            SignedAmount::from_sat(3301),
+            SignedAmount::from_sat(21)
+        ];
+        let sum = amounts.into_iter().checked_sum();
+        assert_eq!(Some(SignedAmount::from_sat(3364)), sum);
     }
 }

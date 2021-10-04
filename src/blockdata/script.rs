@@ -41,6 +41,7 @@ use policy::DUST_RELAY_TX_FEE;
 #[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 use util::ecdsa::PublicKey;
+use util::address::WitnessVersion;
 
 #[derive(Clone, Default, PartialOrd, Ord, PartialEq, Eq, Hash)]
 /// A Bitcoin script
@@ -118,13 +119,16 @@ pub enum Error {
     EarlyEndOfScript,
     /// Tried to read an array off the stack as a number when it was more than 4 bytes
     NumericOverflow,
-    #[cfg(feature="bitcoinconsensus")]
+    #[cfg(feature = "bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Error validating the script with bitcoinconsensus library
     BitcoinConsensus(bitcoinconsensus::Error),
-    #[cfg(feature="bitcoinconsensus")]
+    #[cfg(feature = "bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Can not find the spent output
     UnknownSpentOutput(OutPoint),
-    #[cfg(feature="bitcoinconsensus")]
+    #[cfg(feature = "bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Can not serialize the spending transaction
     SerializationError
 }
@@ -147,7 +151,24 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl ::std::error::Error for Error {}
+
+// Our internal error proves that we only return these two cases from `read_uint_iter`.
+// Since it's private we don't bother with trait impls besides From.
+enum UintError {
+    EarlyEndOfScript,
+    NumericOverflow,
+}
+
+impl From<UintError> for Error {
+    fn from(error: UintError) -> Self {
+        match error {
+            UintError::EarlyEndOfScript => Error::EarlyEndOfScript,
+            UintError::NumericOverflow => Error::NumericOverflow,
+        }
+    }
+}
 
 #[cfg(feature="bitcoinconsensus")]
 #[doc(hidden)]
@@ -222,13 +243,38 @@ pub fn read_scriptbool(v: &[u8]) -> bool {
 }
 
 /// Read a script-encoded unsigned integer
+///
+/// ## Errors
+///
+/// This function returns an error in these cases:
+///
+/// * `data` is shorter than `size` => `EarlyEndOfScript`
+/// * `size` is greater than `u16::max_value / 8` (8191) => `NumericOverflow`
+/// * The number being read overflows `usize` => `NumericOverflow`
+///
+/// Note that this does **not** return an error for `size` between `core::size_of::<usize>()`
+/// and `u16::max_value / 8` if there's no overflow.
 pub fn read_uint(data: &[u8], size: usize) -> Result<usize, Error> {
+    read_uint_iter(&mut data.iter(), size).map_err(Into::into)
+}
+
+// We internally use implementation based on iterator so that it automatically advances as needed
+// Errors are same as above, just different type.
+fn read_uint_iter(data: &mut ::core::slice::Iter<'_, u8>, size: usize) -> Result<usize, UintError> {
     if data.len() < size {
-        Err(Error::EarlyEndOfScript)
+        Err(UintError::EarlyEndOfScript)
+    } else if size > usize::from(u16::max_value() / 8) {
+        // Casting to u32 would overflow
+        Err(UintError::NumericOverflow)
     } else {
         let mut ret = 0;
-        for (i, item) in data.iter().take(size).enumerate() {
-            ret += (*item as usize) << (i * 8);
+        for (i, item) in data.take(size).enumerate() {
+            ret = usize::from(*item)
+                // Casting is safe because we checked above to not repeat the same check in a loop
+                .checked_shl((i * 8) as u32)
+                .ok_or(UintError::NumericOverflow)?
+                .checked_add(ret)
+                .ok_or(UintError::NumericOverflow)?;
         }
         Ok(ret)
     }
@@ -268,23 +314,18 @@ impl Script {
 
     /// Generates P2WPKH-type of scriptPubkey
     pub fn new_v0_wpkh(pubkey_hash: &WPubkeyHash) -> Script {
-        Script::new_witness_program(::bech32::u5::try_from_u8(0).unwrap(), &pubkey_hash.to_vec())
+        Script::new_witness_program(WitnessVersion::V0, &pubkey_hash.to_vec())
     }
 
     /// Generates P2WSH-type of scriptPubkey with a given hash of the redeem script
     pub fn new_v0_wsh(script_hash: &WScriptHash) -> Script {
-        Script::new_witness_program(::bech32::u5::try_from_u8(0).unwrap(), &script_hash.to_vec())
+        Script::new_witness_program(WitnessVersion::V0, &script_hash.to_vec())
     }
 
     /// Generates P2WSH-type of scriptPubkey with a given hash of the redeem script
-    pub fn new_witness_program(ver: ::bech32::u5, program: &[u8]) -> Script {
-        let mut verop = ver.to_u8();
-        assert!(verop <= 16, "incorrect witness version provided: {}", verop);
-        if verop > 0 {
-            verop = 0x50 + verop;
-        }
+    pub fn new_witness_program(version: WitnessVersion, program: &[u8]) -> Script {
         Builder::new()
-            .push_opcode(verop.into())
+            .push_opcode(version.into())
             .push_slice(&program)
             .into_script()
     }
@@ -371,17 +412,17 @@ impl Script {
         // push opcode (for 0 to 16) followed by a data push between 2 and 40 bytes gets a new
         // special meaning. The value of the first push is called the "version byte". The following
         // byte vector pushed is called the "witness program".
-        let min_vernum: u8 = opcodes::all::OP_PUSHNUM_1.into_u8();
-        let max_vernum: u8 = opcodes::all::OP_PUSHNUM_16.into_u8();
-        self.0.len() >= 4
-            && self.0.len() <= 42
-            // Version 0 or PUSHNUM_1-PUSHNUM_16
-            && (self.0[0] == 0 || self.0[0] >= min_vernum && self.0[0] <= max_vernum)
-            // Second byte push opcode 2-40 bytes
-            && self.0[1] >= opcodes::all::OP_PUSHBYTES_2.into_u8()
-            && self.0[1] <= opcodes::all::OP_PUSHBYTES_40.into_u8()
+        let script_len = self.0.len();
+        if script_len < 4 || script_len > 42 {
+            return false
+        }
+        let ver_opcode = opcodes::All::from(self.0[0]); // Version 0 or PUSHNUM_1-PUSHNUM_16
+        let push_opbyte = self.0[1]; // Second byte push opcode 2-40 bytes
+        WitnessVersion::from_opcode(ver_opcode).is_ok()
+            && push_opbyte >= opcodes::all::OP_PUSHBYTES_2.into_u8()
+            && push_opbyte <= opcodes::all::OP_PUSHBYTES_40.into_u8()
             // Check that the rest of the script has the correct size
-            && self.0.len() - 2 == self.0[1] as usize
+            && script_len - 2 == push_opbyte as usize
     }
 
     /// Checks whether a script pubkey is a p2wsh output
@@ -407,8 +448,9 @@ impl Script {
 
     /// Whether a script can be proven to have no satisfying input
     pub fn is_provably_unspendable(&self) -> bool {
-        !self.0.is_empty() && (opcodes::All::from(self.0[0]).classify() == opcodes::Class::ReturnOp ||
-                               opcodes::All::from(self.0[0]).classify() == opcodes::Class::IllegalOp)
+        !self.0.is_empty() &&
+            (opcodes::All::from(self.0[0]).classify(opcodes::ClassifyContext::Legacy) == opcodes::Class::ReturnOp ||
+            opcodes::All::from(self.0[0]).classify(opcodes::ClassifyContext::Legacy) == opcodes::Class::IllegalOp)
     }
 
     /// Gets the minimum value an output with this script should have in order to be
@@ -456,12 +498,14 @@ impl Script {
     }
 
     #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Shorthand for [Self::verify_with_flags] with flag [bitcoinconsensus::VERIFY_ALL]
-    pub fn verify (&self, index: usize, amount: u64, spending: &[u8]) -> Result<(), Error> {
-        self.verify_with_flags(index, ::Amount::from_sat(amount), spending, ::bitcoinconsensus::VERIFY_ALL)
+    pub fn verify (&self, index: usize, amount: ::Amount, spending: &[u8]) -> Result<(), Error> {
+        self.verify_with_flags(index, amount, spending, ::bitcoinconsensus::VERIFY_ALL)
     }
 
     #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     /// Verify spend of an input script
     /// # Parameters
     ///  * `index` - the input index in spending which is spending this transaction
@@ -474,50 +518,62 @@ impl Script {
 
     /// Write the assembly decoding of the script bytes to the formatter.
     pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
-        let mut index = 0;
-        while index < script.len() {
-            let opcode = opcodes::All::from(script[index]);
-            index += 1;
+        // This has to be a macro because it needs to break the loop
+        macro_rules! read_push_data_len {
+            ($iter:expr, $len:expr, $formatter:expr) => {
+                match read_uint_iter($iter, $len) {
+                    Ok(n) => {
+                        n
+                    },
+                    Err(UintError::EarlyEndOfScript) => {
+                        $formatter.write_str("<unexpected end>")?;
+                        break;
+                    }
+                    // We got the data in a slice which implies it being shorter than `usize::max_value()`
+                    // So if we got overflow, we can confidently say the number is higher than length of
+                    // the slice even though we don't know the exact number. This implies attempt to push
+                    // past end.
+                    Err(UintError::NumericOverflow) => {
+                        $formatter.write_str("<push past end>")?;
+                        break;
+                    }
+                }
+            }
+        }
 
-            let data_len = if let opcodes::Class::PushBytes(n) = opcode.classify() {
+        let mut iter = script.iter();
+        // Was at least one opcode emitted?
+        let mut at_least_one = false;
+        // `iter` needs to be borrowed in `read_push_data_len`, so we have to use `while let` instead
+        // of `for`.
+        while let Some(byte) = iter.next() {
+            let opcode = opcodes::All::from(*byte);
+
+            let data_len = if let opcodes::Class::PushBytes(n) = opcode.classify(opcodes::ClassifyContext::Legacy) {
                 n as usize
             } else {
                 match opcode {
                     opcodes::all::OP_PUSHDATA1 => {
-                        if script.len() < index + 1 {
-                            f.write_str("<unexpected end>")?;
-                            break;
-                        }
-                        match read_uint(&script[index..], 1) {
-                            Ok(n) => { index += 1; n as usize }
-                            Err(_) => { f.write_str("<bad length>")?; break; }
-                        }
+                        // side effects: may write and break from the loop
+                        read_push_data_len!(&mut iter, 1, f)
                     }
                     opcodes::all::OP_PUSHDATA2 => {
-                        if script.len() < index + 2 {
-                            f.write_str("<unexpected end>")?;
-                            break;
-                        }
-                        match read_uint(&script[index..], 2) {
-                            Ok(n) => { index += 2; n as usize }
-                            Err(_) => { f.write_str("<bad length>")?; break; }
-                        }
+                        // side effects: may write and break from the loop
+                        read_push_data_len!(&mut iter, 2, f)
                     }
                     opcodes::all::OP_PUSHDATA4 => {
-                        if script.len() < index + 4 {
-                            f.write_str("<unexpected end>")?;
-                            break;
-                        }
-                        match read_uint(&script[index..], 4) {
-                            Ok(n) => { index += 4; n as usize }
-                            Err(_) => { f.write_str("<bad length>")?; break; }
-                        }
+                        // side effects: may write and break from the loop
+                        read_push_data_len!(&mut iter, 4, f)
                     }
                     _ => 0
                 }
             };
 
-            if index > 1 { f.write_str(" ")?; }
+            if at_least_one {
+                f.write_str(" ")?;
+            } else {
+                at_least_one = true;
+            }
             // Write the opcode
             if opcode == opcodes::all::OP_PUSHBYTES_0 {
                 f.write_str("OP_0")?;
@@ -527,11 +583,10 @@ impl Script {
             // Write any pushdata
             if data_len > 0 {
                 f.write_str(" ")?;
-                if index + data_len <= script.len() {
-                    for ch in &script[index..index + data_len] {
-                            write!(f, "{:02x}", ch)?;
+                if data_len <= iter.len() {
+                    for ch in iter.by_ref().take(data_len) {
+                        write!(f, "{:02x}", ch)?;
                     }
-                    index += data_len;
                 } else {
                     f.write_str("<push past end>")?;
                     break;
@@ -589,7 +644,9 @@ impl<'a> Iterator for Instructions<'a> {
             return None;
         }
 
-        match opcodes::All::from(self.data[0]).classify() {
+        // classify parameter does not really matter here since we are only using
+        // it for pushes and nums
+        match opcodes::All::from(self.data[0]).classify(opcodes::ClassifyContext::Legacy) {
             opcodes::Class::PushBytes(n) => {
                 let n = n as usize;
                 if self.data.len() < n + 1 {
@@ -821,57 +878,78 @@ impl From<Vec<u8>> for Builder {
 impl_index_newtype!(Builder, u8);
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 impl<'de> serde::Deserialize<'de> for Script {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
+    where D: serde::Deserializer<'de>,
     {
         use core::fmt::Formatter;
         use hashes::hex::FromHex;
 
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = Script;
+        if deserializer.is_human_readable() {
 
-            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
-                formatter.write_str("a script")
-            }
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Script;
 
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                let v = Vec::from_hex(v).map_err(E::custom)?;
-                Ok(Script::from(v))
-            }
+                fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                    formatter.write_str("a script hex")
+                }
 
-            fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                self.visit_str(v)
-            }
+                fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                    where E: serde::de::Error,
+                {
+                    let v = Vec::from_hex(v).map_err(E::custom)?;
+                    Ok(Script::from(v))
+                }
 
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                self.visit_str(&v)
+                fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+                    where E: serde::de::Error,
+                {
+                    self.visit_str(v)
+                }
+
+                fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+                    where E: serde::de::Error,
+                {
+                    self.visit_str(&v)
+                }
             }
+            deserializer.deserialize_str(Visitor)
+        } else {
+            struct BytesVisitor;
+
+            impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+                type Value = Script;
+
+                fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                    formatter.write_str("a script Vec<u8>")
+                }
+
+                fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+                    where E: serde::de::Error,
+                {
+                    Ok(Script::from(v.to_vec()))
+                }
+            }
+            deserializer.deserialize_bytes(BytesVisitor)
         }
-
-        deserializer.deserialize_str(Visitor)
     }
 }
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 impl serde::Serialize for Script {
     /// User-facing serialization for `Script`.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&format!("{:x}", self))
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&format!("{:x}", self))
+        } else {
+            serializer.serialize_bytes(&self.as_bytes())
+        }
     }
 }
 
@@ -1129,6 +1207,22 @@ mod test {
         // Elements Alpha peg-out transaction with some signatures removed for brevity. Mainly to test PUSHDATA1
         assert_eq!(hex_script!("0047304402202457e78cc1b7f50d0543863c27de75d07982bde8359b9e3316adec0aec165f2f02200203fd331c4e4a4a02f48cf1c291e2c0d6b2f7078a784b5b3649fca41f8794d401004cf1552103244e602b46755f24327142a0517288cebd159eccb6ccf41ea6edf1f601e9af952103bbbacc302d19d29dbfa62d23f37944ae19853cf260c745c2bea739c95328fcb721039227e83246bd51140fe93538b2301c9048be82ef2fb3c7fc5d78426ed6f609ad210229bf310c379b90033e2ecb07f77ecf9b8d59acb623ab7be25a0caed539e2e6472103703e2ed676936f10b3ce9149fa2d4a32060fb86fa9a70a4efe3f21d7ab90611921031e9b7c6022400a6bb0424bbcde14cff6c016b91ee3803926f3440abf5c146d05210334667f975f55a8455d515a2ef1c94fdfa3315f12319a14515d2a13d82831f62f57ae").asm(),
                    "OP_0 OP_PUSHBYTES_71 304402202457e78cc1b7f50d0543863c27de75d07982bde8359b9e3316adec0aec165f2f02200203fd331c4e4a4a02f48cf1c291e2c0d6b2f7078a784b5b3649fca41f8794d401 OP_0 OP_PUSHDATA1 552103244e602b46755f24327142a0517288cebd159eccb6ccf41ea6edf1f601e9af952103bbbacc302d19d29dbfa62d23f37944ae19853cf260c745c2bea739c95328fcb721039227e83246bd51140fe93538b2301c9048be82ef2fb3c7fc5d78426ed6f609ad210229bf310c379b90033e2ecb07f77ecf9b8d59acb623ab7be25a0caed539e2e6472103703e2ed676936f10b3ce9149fa2d4a32060fb86fa9a70a4efe3f21d7ab90611921031e9b7c6022400a6bb0424bbcde14cff6c016b91ee3803926f3440abf5c146d05210334667f975f55a8455d515a2ef1c94fdfa3315f12319a14515d2a13d82831f62f57ae");
+        // Various weird scripts found in transaction 6d7ed9914625c73c0288694a6819196a27ef6c08f98e1270d975a8e65a3dc09a
+        // which triggerred overflow bugs on 32-bit machines in script formatting in the past.
+        assert_eq!(hex_script!("01").asm(),
+                   "OP_PUSHBYTES_1 <push past end>");
+        assert_eq!(hex_script!("0201").asm(),
+                   "OP_PUSHBYTES_2 <push past end>");
+        assert_eq!(hex_script!("4c").asm(),
+                   "<unexpected end>");
+        assert_eq!(hex_script!("4c0201").asm(),
+                   "OP_PUSHDATA1 <push past end>");
+        assert_eq!(hex_script!("4d").asm(),
+                   "<unexpected end>");
+        assert_eq!(hex_script!("4dffff01").asm(),
+                   "OP_PUSHDATA2 <push past end>");
+        assert_eq!(hex_script!("4effffffff01").asm(),
+                   "OP_PUSHDATA4 <push past end>");
     }
 
     #[test]
@@ -1257,7 +1351,7 @@ mod test {
 		// a random segwit transaction from the blockchain using native segwit
 		let spent = Builder::from(Vec::from_hex("0020701a8d401c84fb13e6baf169d59684e17abd9fa216c8cc5b9fc63d622ff8c58d").unwrap()).into_script();
 		let spending = Vec::from_hex("010000000001011f97548fbbe7a0db7588a66e18d803d0089315aa7d4cc28360b6ec50ef36718a0100000000ffffffff02df1776000000000017a9146c002a686959067f4866b8fb493ad7970290ab728757d29f0000000000220020701a8d401c84fb13e6baf169d59684e17abd9fa216c8cc5b9fc63d622ff8c58d04004730440220565d170eed95ff95027a69b313758450ba84a01224e1f7f130dda46e94d13f8602207bdd20e307f062594022f12ed5017bbf4a055a06aea91c10110a0e3bb23117fc014730440220647d2dc5b15f60bc37dc42618a370b2a1490293f9e5c8464f53ec4fe1dfe067302203598773895b4b16d37485cbe21b337f4e4b650739880098c592553add7dd4355016952210375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c2103a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff2103c96d495bfdd5ba4145e3e046fee45e84a8a48ad05bd8dbb395c011a32cf9f88053ae00000000").unwrap();
-		spent.verify(0, 18393430, spending.as_slice()).unwrap();
+		spent.verify(0, ::Amount::from_sat(18393430), spending.as_slice()).unwrap();
 	}
 
     #[test]
@@ -1278,5 +1372,22 @@ mod test {
         assert!(script_p2pkh.is_p2pkh());
         assert_eq!(script_p2pkh.dust_value(), ::Amount::from_sat(546));
     }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_script_serde_human_and_not() {
+        let script = Script::from(vec![0u8, 1u8, 2u8]);
+
+        // Serialize
+        let json = ::serde_json::to_string(&script).unwrap();
+        assert_eq!(json, "\"000102\"");
+        let bincode = ::bincode::serialize(&script).unwrap();
+        assert_eq!(bincode, [3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]); // bincode adds u64 for length, serde_cbor use varint
+
+        // Deserialize
+        assert_eq!(script, ::serde_json::from_str(&json).unwrap());
+        assert_eq!(script, ::bincode::deserialize(&bincode).unwrap());
+    }
+
 }
 

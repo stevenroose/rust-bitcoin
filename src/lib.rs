@@ -22,11 +22,29 @@
 //! safety, including ownership and lifetime, for financial and/or cryptographic
 //! software.
 //!
+//! See README.md for detailed documentation about development and supported
+//! environments.
+//!
+//! ## Available feature flags
+//!
+//! * `std` - the usual dependency on `std` (default).
+//! * `secp-recovery` - enables calculating public key from a signature and message.
+//! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
+//! * `unstable` - enables unstable features for testing.
+//! * `rand` - (dependency) makes it more convenient to generate random values.
+//! * `use-serde` - (dependency) implements `serde`-based serialization and
+//!                 deserialization
+//! * `secp-lowmemory` - optimizations for low-memory devices
+//! * `no-std` - enables additional features required for this crate to be usable
+//!              without std. Does **not** disable `std`. Depends on `hashbrown`
+//!              and `core2`.
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 
 // Experimental features we need
 #![cfg_attr(all(test, feature = "unstable"), feature(test))]
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Coding conventions
 #![forbid(unsafe_code)]
@@ -42,6 +60,12 @@
 
 #[cfg(not(any(feature = "std", feature = "no-std")))]
 compile_error!("at least one of the `std` or `no-std` features must be enabled");
+
+// Disable 16-bit support at least for now as we can't guarantee it yet.
+#[cfg(target_pointer_width = "16")]
+compile_error!("rust-bitcoin currently only supports architectures with pointers wider
+                than 16 bits, let us know if you want 16-bit support. Note that we do
+                NOT guarantee that we will implement it!");
 
 #[cfg(feature = "no-std")]
 #[macro_use]
@@ -60,7 +84,9 @@ pub extern crate bech32;
 #[cfg(feature = "no-std")]
 extern crate hashbrown;
 
-#[cfg(feature = "base64")] pub extern crate base64;
+#[cfg(feature = "base64")]
+#[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
+pub extern crate base64;
 
 #[cfg(feature="bitcoinconsensus")] extern crate bitcoinconsensus;
 #[cfg(feature = "serde")] #[macro_use] extern crate serde;
