@@ -15,7 +15,7 @@ use core::fmt;
 
 use crate::util;
 use crate::util::Error::{BlockBadTarget, BlockBadProofOfWork};
-use crate::util::hash::bitcoin_merkle_root;
+use crate::util::merkle::bitcoin_merkle_root;
 use crate::hashes::{Hash, HashEngine};
 use crate::hash_types::{Wtxid, BlockHash, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
 use crate::util::uint::Uint256;
