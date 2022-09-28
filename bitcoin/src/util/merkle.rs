@@ -159,6 +159,38 @@ where
     pub fn root(&self) -> T {
         *self.nodes.last().unwrap()
     }
+
+    /// Calculate the merkle root of the tree that is identical to this tree,
+    /// but has leaf with index [idx] replaced by [replacement].
+    /// Panics if idx is not a valid leaf index.
+    /// This method uses constant memory and performs log(n) hash calculations.
+    pub fn calculate_root_with_replaced_leaf(&self, mut idx: usize, mut replacement: T) -> T {
+        assert!(idx < self.nb_leaves);
+
+        let mut layer_init = 0;
+        let mut layer_size = self.nb_leaves;
+        while layer_size > 1 {
+            replacement = {
+                let mut engine = T::engine();
+                if idx % 2 == 0 && idx == layer_size - 1 {
+                    replacement.consensus_encode(&mut engine).expect("in-memory writers don't error");
+                    replacement.consensus_encode(&mut engine).expect("in-memory writers don't error");
+                } else if idx % 2 == 0 {
+                    replacement.consensus_encode(&mut engine).expect("in-memory writers don't error");
+                    self.nodes[layer_init + idx + 1].consensus_encode(&mut engine).expect("in-memory writers don't error");
+                } else {
+                    self.nodes[layer_init + idx - 1].consensus_encode(&mut engine).expect("in-memory writers don't error");
+                    replacement.consensus_encode(&mut engine).expect("in-memory writers don't error");
+                };
+                T::from_engine(engine)
+            };
+            // on the next layer
+            layer_init = layer_init + layer_size;
+            layer_size = layer_size / 2 + layer_size % 2;
+            idx = idx / 2;
+        }
+        replacement
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +200,8 @@ mod tests {
 
     use crate::blockdata::block::Block;
     use super::*;
+
+    use secp256k1::rand::{Rng, thread_rng};
 
     #[test]
     fn both_merkle_root_functions_return_the_same_result() {
@@ -198,6 +232,25 @@ mod tests {
 
             let tree = MerkleTree::new(hashes, length);
             assert_eq!(root, tree.root());
+        }
+    }
+
+    #[test]
+    fn test_calculate_root_with_replaced_leaf() {
+        for length in TEST_LENGTHS.iter().copied() {
+            for _ in 0..(min(5, length)) {
+                let idx = thread_rng().gen_range(0..length);
+                let original_hashes = (0..length).map(|i| sha256::Hash::hash(i.to_string().as_bytes()));
+                let tweaked_hashes = (0..length).map(|i| if i == idx {
+                    sha256::Hash::all_zeros()
+                } else {
+                    sha256::Hash::hash(i.to_string().as_bytes())
+                });
+
+                let tree = MerkleTree::new(original_hashes, length);
+                let root = bitcoin_merkle_root(tweaked_hashes.clone()).unwrap();
+                assert_eq!(root, tree.calculate_root_with_replaced_leaf(idx, sha256::Hash::all_zeros()));
+            }
         }
     }
 }
