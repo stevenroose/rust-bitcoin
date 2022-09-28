@@ -97,10 +97,74 @@ where
     merkle_root_r(&mut hashes[0..half_len])
 }
 
+/// A full merkle tree.
+pub struct MerkleTree<T> {
+    nb_leaves: usize,
+    nodes: Vec<T>,
+}
+
+impl<T> MerkleTree<T>
+where
+    T: Copy + Hash + Encodable,
+    <T as Hash>::Engine: io::Write,
+{
+    /// Construct a full merkle tree from the given iterator of hashes.
+    /// This method panics:
+    /// - for empty trees
+    /// - if the iterater yields less than [nb_leaves] elements.
+    pub fn new<I>(hashes: I, nb_leaves: usize) -> MerkleTree<T>
+    where
+        I: Iterator<Item=T>,
+    {
+        assert_ne!(nb_leaves, 0);
+
+        let nb_nodes = {
+            let mut ret = 0;
+            let mut layer = nb_leaves;
+            while layer > 1 {
+                ret += layer;
+                layer = layer / 2 + layer % 2
+            }
+            ret + 1
+        };
+
+        let mut nodes = Vec::with_capacity(nb_nodes);
+        // First put the leaves in place.
+        nodes.extend(hashes.take(nb_leaves));
+        assert_eq!(nodes.len(), nb_leaves);
+
+        let mut layer_init = 0;
+        let mut layer_size = nb_leaves;
+        while layer_size > 1 {
+            for idx in 0..((layer_size + 1) / 2) {
+                let idx1 = 2 * idx;
+                let idx2 = min(idx1 + 1, layer_size - 1);
+                let mut encoder = T::engine();
+                nodes[layer_init + idx1].consensus_encode(&mut encoder).expect("in-memory writers don't error");
+                nodes[layer_init + idx2].consensus_encode(&mut encoder).expect("in-memory writers don't error");
+                nodes.push(T::from_engine(encoder));
+            }
+            layer_init = layer_init + layer_size;
+            layer_size = layer_size / 2 + layer_size % 2;
+        }
+
+        assert_eq!(nodes.len(), nb_nodes);
+        MerkleTree {
+            nb_leaves: nb_leaves,
+            nodes: nodes,
+        }
+    }
+
+    /// The merkle root of the tree.
+    pub fn root(&self) -> T {
+        *self.nodes.last().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::consensus::encode::deserialize;
-    use crate::hashes::sha256d;
+    use crate::hashes::{Hash, sha256, sha256d};
 
     use crate::blockdata::block::Block;
     use super::*;
@@ -122,5 +186,18 @@ mod tests {
         let from_iter = bitcoin_merkle_root(hashes_iter);
         let from_array = bitcoin_merkle_root_inline(&mut hashes_array);
         assert_eq!(from_iter, from_array);
+    }
+
+    const TEST_LENGTHS: [usize; 10] = [1, 2, 3, 4, 17, 32, 1023, 1024, 1025, 1111];
+
+    #[test]
+    fn compare_merkle_tree_root_with_fast_root() {
+        for length in TEST_LENGTHS.iter().copied() {
+            let hashes = (0..length).map(|i| sha256::Hash::hash(i.to_string().as_bytes()));
+            let root = bitcoin_merkle_root(hashes.clone()).unwrap();
+
+            let tree = MerkleTree::new(hashes, length);
+            assert_eq!(root, tree.root());
+        }
     }
 }
