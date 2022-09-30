@@ -18,6 +18,7 @@ use crate::blockdata::witness::Witness;
 use crate::consensus::{encode, Encodable};
 use crate::error::impl_std_error;
 use crate::util::endian;
+use crate::util::merkle::MerkleTree;
 use crate::hashes::{sha256, sha256d, Hash};
 use crate::internal_macros::serde_string_impl;
 use crate::prelude::*;
@@ -47,6 +48,9 @@ pub struct SighashCache<T: Deref<Target=Transaction>> {
 
     /// Cache for taproot v1 inputs.
     taproot_cache: Option<TaprootCache>,
+
+    /// Cache for taproot v1 inputs with `SIGHASH_ANYPREVOUT` or `SIGHASH_ANYPREVOUTANYSCRIPT`.
+    anyprevout_cache: Option<AnyPrevoutCache>,
 }
 
 /// Common values cached between segwit and taproot inputs.
@@ -73,6 +77,14 @@ struct SegwitCache {
 struct TaprootCache {
     amounts: sha256::Hash,
     script_pubkeys: sha256::Hash,
+}
+
+/// Values cached for taproot inputs using `SIGHASH_ANYPREVOUT` or `SIGHASH_ANYPREVOUTANYSCRIPT`.
+#[derive(Debug)]
+struct AnyPrevoutCache {
+    /// A merkle tree of all the prevouts, to efficiently calculate roots for
+    /// merkle trees in which one leaf is replaced with the zero hash.
+    prevout_tree: MerkleTree<sha256::Hash>,
 }
 
 /// Contains outputs of previous transactions. In the case [`SchnorrSighashType`] variant is
@@ -141,22 +153,29 @@ pub enum SchnorrSighashType {
     /// 0x83: Sign one output and only this input (see `Single` for what "one output" means).
     SinglePlusAnyoneCanPay = 0x83,
 
-    /// 0x41: Sign all outputs but no prevouts and only this input.
+    /// 0x41: Sign all outputs but no prevouts.
     AnyPrevoutAll = 0x41,
-    /// 0x42: Sign no outputs, no prevouts and only this input.
+    /// 0x42: Sign no outputs and no prevouts.
     AnyPrevoutNone = 0x42,
-    /// 0x43: Sign one output, no prevouts and only this input (see `Single`
-    /// for what "one output" means).
+    /// 0x43: Sign one output and no prevouts (see `Single` for what
+    /// "one output" means).
     AnyPrevoutSingle = 0x43,
-    /// 0xc1: Sign all outputs but no prevouts, no prevout script and only
+    /// 0xc1: Sign all outputs but no prevouts and only this input.
+    AnyPrevoutAnyoneCanPayAll = 0xc1,
+    /// 0xc2: Sign no outputs, no prevouts and only this input.
+    AnyPrevoutAnyoneCanPayNone = 0xc2,
+    /// 0xc3: Sign one output, no prevouts and only this input (see `Single`
+    /// for what "one output" means).
+    AnyPrevoutAnyoneCanPaySingle = 0xc3,
+    /// 0xe1: Sign all outputs but no prevouts, no prevout script and only
     /// this input.
-    AnyPrevoutAnyScriptAll = 0xc1,
-    /// 0xc2: Sign no outputs, no prevouts, no prevout script and only this
+    AnyPrevoutAnyoneCanPayAnyScriptAll = 0xe1,
+    /// 0xe2: Sign no outputs, no prevouts, no prevout script and only this
     /// input.
-    AnyPrevoutAnyScriptNone = 0xc2,
-    /// 0xc3: Sign one output, no prevouts, no prevout script and only this
+    AnyPrevoutAnyoneCanPayAnyScriptNone = 0xe2,
+    /// 0xe3: Sign one output, no prevouts, no prevout script and only this
     /// input (see `Single` for what "one output" means).
-    AnyPrevoutAnyScriptSingle = 0xc3,
+    AnyPrevoutAnyoneCanPayAnyScriptSingle = 0xe3,
 }
 serde_string_impl!(SchnorrSighashType, "a SchnorrSighashType data");
 
@@ -173,9 +192,18 @@ impl fmt::Display for SchnorrSighashType {
             SchnorrSighashType::AnyPrevoutAll => "SIGHASH_ALL|SIGHASH_ANYPREVOUT",
             SchnorrSighashType::AnyPrevoutNone => "SIGHASH_NONE|SIGHASH_ANYPREVOUT",
             SchnorrSighashType::AnyPrevoutSingle => "SIGHASH_SINGLE|SIGHASH_ANYPREVOUT",
-            SchnorrSighashType::AnyPrevoutAnyScriptAll => "SIGHASH_ALL|SIGHASH_ANYPREVOUTANYSCRIPT",
-            SchnorrSighashType::AnyPrevoutAnyScriptNone => "SIGHASH_NONE|SIGHASH_ANYPREVOUTANYSCRIPT",
-            SchnorrSighashType::AnyPrevoutAnyScriptSingle => "SIGHASH_SINGLE|SIGHASH_ANYPREVOUTANYSCRIPT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPayAll =>
+                "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPayNone =>
+                "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPaySingle =>
+                "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptAll =>
+                "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptNone =>
+                "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
+            SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptSingle =>
+                "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
         };
         f.write_str(s)
     }
@@ -196,9 +224,18 @@ impl str::FromStr for SchnorrSighashType {
             "SIGHASH_ALL|SIGHASH_ANYPREVOUT" => Ok(SchnorrSighashType::AnyPrevoutAll),
             "SIGHASH_NONE|SIGHASH_ANYPREVOUT" => Ok(SchnorrSighashType::AnyPrevoutNone),
             "SIGHASH_SINGLE|SIGHASH_ANYPREVOUT" => Ok(SchnorrSighashType::AnyPrevoutSingle),
-            "SIGHASH_ALL|SIGHASH_ANYPREVOUTANYSCRIPT" => Ok(SchnorrSighashType::AnyPrevoutAnyScriptAll),
-            "SIGHASH_NONE|SIGHASH_ANYPREVOUTANYSCRIPT" => Ok(SchnorrSighashType::AnyPrevoutAnyScriptNone),
-            "SIGHASH_SINGLE|SIGHASH_ANYPREVOUTANYSCRIPT" => Ok(SchnorrSighashType::AnyPrevoutAnyScriptSingle),
+            "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPayAll),
+            "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPayNone),
+            "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPaySingle),
+            "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptAll),
+            "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptNone),
+            "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT" =>
+                Ok(SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptSingle),
             _ => Err(SighashTypeParseError{ unrecognized: s.to_owned() }),
         }
     }
@@ -507,9 +544,12 @@ impl SchnorrSighashType {
             AnyPrevoutAll => (All, false, true, false),
             AnyPrevoutNone => (None, false, true, false),
             AnyPrevoutSingle => (Single, false, true, false),
-            AnyPrevoutAnyScriptAll => (All, false, false, true),
-            AnyPrevoutAnyScriptNone => (None, false, false, true),
-            AnyPrevoutAnyScriptSingle => (Single, false, false, true),
+            AnyPrevoutAnyoneCanPayAll => (All, true, true, false),
+            AnyPrevoutAnyoneCanPayNone => (None, true, true, false),
+            AnyPrevoutAnyoneCanPaySingle => (Single, true, true, false),
+            AnyPrevoutAnyoneCanPayAnyScriptAll => (All, true, true, true),
+            AnyPrevoutAnyoneCanPayAnyScriptNone => (None, true, true, true),
+            AnyPrevoutAnyoneCanPayAnyScriptSingle => (Single, true, true, true),
         }
     }
 
@@ -528,9 +568,12 @@ impl SchnorrSighashType {
             0x41 => AnyPrevoutAll,
             0x42 => AnyPrevoutNone,
             0x43 => AnyPrevoutSingle,
-            0xc1 => AnyPrevoutAnyScriptAll,
-            0xc2 => AnyPrevoutAnyScriptNone,
-            0xc3 => AnyPrevoutAnyScriptSingle,
+            0xc1 => AnyPrevoutAnyoneCanPayAll,
+            0xc2 => AnyPrevoutAnyoneCanPayNone,
+            0xc3 => AnyPrevoutAnyoneCanPaySingle,
+            0xe1 => AnyPrevoutAnyoneCanPayAnyScriptAll,
+            0xe2 => AnyPrevoutAnyoneCanPayAnyScriptNone,
+            0xe3 => AnyPrevoutAnyoneCanPayAnyScriptSingle,
             x => return Err(Error::InvalidSighashType(x as u32)),
         })
     }
@@ -578,6 +621,7 @@ impl<R: Deref<Target = Transaction>> SighashCache<R> {
             common_cache: None,
             taproot_cache: None,
             segwit_cache: None,
+            anyprevout_cache: None,
         }
     }
 
@@ -628,7 +672,7 @@ impl<R: Deref<Target = Transaction>> SighashCache<R> {
         //     sha_amounts (32): the SHA256 of the serialization of all spent output amounts.
         //     sha_scriptpubkeys (32): the SHA256 of the serialization of all spent output scriptPubKeys.
         //     sha_sequences (32): the SHA256 of the serialization of all input nSequence.
-        if !anyone_can_pay && !any_prevout && !any_prevout_any_script {
+        if !anyone_can_pay && !any_prevout {
             self.common_cache().prevouts.consensus_encode(&mut writer)?;
             self.taproot_cache(prevouts.get_all()?)
                 .amounts
@@ -665,23 +709,29 @@ impl<R: Deref<Target = Transaction>> SighashCache<R> {
         //      scriptPubKey (35): scriptPubKey of the previous output spent by this input, serialized as script inside CTxOut. Its size is always 35 bytes.
         //      nSequence (4): nSequence of this input.
         if anyone_can_pay || any_prevout || any_prevout_any_script {
-            let txin =
-                &self
-                    .tx
-                    .input
-                    .get(input_index)
-                    .ok_or(Error::IndexOutOfInputsBounds {
-                        index: input_index,
-                        inputs_size: self.tx.input.len(),
-                    })?;
-            if anyone_can_pay {
+            let tx = &self.tx;
+            let txin = tx.input.get(input_index)
+                .ok_or(Error::IndexOutOfInputsBounds {
+                    index: input_index,
+                    inputs_size: tx.input.len(),
+                })?;
+
+            if anyone_can_pay && !any_prevout {
                 txin.previous_output.consensus_encode(&mut writer)?;
                 prevouts.get(input_index)?.consensus_encode(&mut writer)?;
                 txin.sequence.consensus_encode(&mut writer)?;
-            } else if any_prevout {
+            } else if any_prevout && !anyone_can_pay {
+                // Commit to all other prevouts.
+                let cache = Self::anyprevout_cache_minimal_borrow(&mut self.anyprevout_cache, tx);
+                cache.prevout_tree.calculate_root_with_replaced_leaf(
+                    input_index, sha256::Hash::all_zeros(),
+                ).consensus_encode(&mut writer)?;
                 prevouts.get(input_index)?.consensus_encode(&mut writer)?;
                 txin.sequence.consensus_encode(&mut writer)?;
-            } else if any_prevout_any_script {
+            } else if anyone_can_pay && any_prevout {
+                prevouts.get(input_index)?.consensus_encode(&mut writer)?;
+                txin.sequence.consensus_encode(&mut writer)?;
+            } else if anyone_can_pay && any_prevout && any_prevout_any_script {
                 txin.sequence.consensus_encode(&mut writer)?;
             } else {
                 unreachable!();
@@ -1080,8 +1130,7 @@ impl<R: Deref<Target = Transaction>> SighashCache<R> {
         })
     }
 
-    fn taproot_cache<T: Borrow<TxOut>>(&mut self, prevouts: &[T]) -> &TaprootCache
-    {
+    fn taproot_cache<T: Borrow<TxOut>>(&mut self, prevouts: &[T]) -> &TaprootCache {
         self.taproot_cache.get_or_insert_with(|| {
             let mut enc_amounts = sha256::Hash::engine();
             let mut enc_script_pubkeys = sha256::Hash::engine();
@@ -1096,6 +1145,27 @@ impl<R: Deref<Target = Transaction>> SighashCache<R> {
             TaprootCache {
                 amounts: sha256::Hash::from_engine(enc_amounts),
                 script_pubkeys: sha256::Hash::from_engine(enc_script_pubkeys),
+            }
+        })
+    }
+
+    #[allow(unused)] // currently only the anyprevout_cache_minimal_borrow is used
+    fn anyprevout_cache(&mut self) -> &AnyPrevoutCache {
+        Self::anyprevout_cache_minimal_borrow(&mut self.anyprevout_cache, &self.tx)
+    }
+
+    fn anyprevout_cache_minimal_borrow<'a>(
+        anyprevout_cache: &'a mut Option<AnyPrevoutCache>,
+        tx: &R,
+    ) -> &'a AnyPrevoutCache {
+        anyprevout_cache.get_or_insert_with(|| {
+            let prevouts = tx.input.iter().map(|i| {
+                let mut engine = sha256::Hash::engine();
+                i.previous_output.consensus_encode(&mut engine).unwrap();
+                sha256::Hash::from_engine(engine)
+            });
+            AnyPrevoutCache {
+                prevout_tree: MerkleTree::new(prevouts, tx.input.len()),
             }
         })
     }
