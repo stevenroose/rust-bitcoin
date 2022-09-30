@@ -1665,6 +1665,33 @@ mod tests {
             ("SIGHASH_ALL|SIGHASH_ANYONECANPAY", SchnorrSighashType::AllPlusAnyoneCanPay),
             ("SIGHASH_NONE|SIGHASH_ANYONECANPAY", SchnorrSighashType::NonePlusAnyoneCanPay),
             ("SIGHASH_SINGLE|SIGHASH_ANYONECANPAY", SchnorrSighashType::SinglePlusAnyoneCanPay),
+            ("SIGHASH_ALL|SIGHASH_ANYPREVOUT", SchnorrSighashType::AnyPrevoutAll),
+            ("SIGHASH_NONE|SIGHASH_ANYPREVOUT", SchnorrSighashType::AnyPrevoutNone),
+            ("SIGHASH_SINGLE|SIGHASH_ANYPREVOUT", SchnorrSighashType::AnyPrevoutSingle),
+            (
+                "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPayAll,
+            ),
+            (
+                "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPayNone,
+            ),
+            (
+                "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPaySingle,
+            ),
+            (
+                "SIGHASH_ALL|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptAll,
+            ),
+            (
+                "SIGHASH_NONE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptNone,
+            ),
+            (
+                "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY|SIGHASH_ANYPREVOUTANYSCRIPT",
+                SchnorrSighashType::AnyPrevoutAnyoneCanPayAnyScriptSingle,
+            ),
         ];
         for (s, sht) in sighashtypes {
             assert_eq!(sht.to_string(), s);
